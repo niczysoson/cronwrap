@@ -1,12 +1,13 @@
-"""Core runner for cronwrap — executes commands with retry and alerting support."""
+"""Core runner logic for executing cron job commands with retry support."""
 
 import subprocess
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
+from cronwrap.history import HistoryEntry, JobHistory
 from cronwrap.logger import get_logger
-from cronwrap.alerting import AlertConfig, send_failure_alert
 
 logger = get_logger(__name__)
 
@@ -14,27 +15,34 @@ logger = get_logger(__name__)
 @dataclass
 class RunResult:
     command: str
-    returncode: int
+    exit_code: int
     stdout: str
     stderr: str
     attempts: int
-    success: bool
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: Optional[datetime] = None
+
+    @property
+    def success(self) -> bool:
+        return self.exit_code == 0
 
 
 def run(
     command: str,
+    job_name: str = "unnamed",
     retries: int = 0,
     retry_delay: float = 5.0,
-    timeout: Optional[float] = None,
-    alert_config: Optional[AlertConfig] = None,
+    timeout: Optional[int] = None,
+    history: Optional[JobHistory] = None,
 ) -> RunResult:
-    """Run a shell command with optional retries and failure alerting."""
-    attempts = 0
-    last_result = None
+    """Execute a shell command with optional retry logic and history recording."""
+    started_at = datetime.now(timezone.utc)
+    attempt = 0
+    last_result: Optional[RunResult] = None
 
-    for attempt in range(1, retries + 2):
-        attempts = attempt
-        logger.info("Running command (attempt %d/%d): %s", attempt, retries + 1, command)
+    while attempt <= retries:
+        attempt += 1
+        logger.info("[%s] attempt %d/%d: %s", job_name, attempt, retries + 1, command)
 
         try:
             proc = subprocess.run(
@@ -44,61 +52,48 @@ def run(
                 text=True,
                 timeout=timeout,
             )
+            exit_code = proc.returncode
+            stdout = proc.stdout
+            stderr = proc.stderr
         except subprocess.TimeoutExpired as exc:
-            logger.error("Command timed out after %s seconds: %s", timeout, command)
-            last_result = RunResult(
-                command=command,
-                returncode=-1,
-                stdout="",
-                stderr=f"TimeoutExpired: {exc}",
-                attempts=attempts,
-                success=False,
-            )
-            if attempt <= retries:
-                time.sleep(retry_delay)
-            continue
+            logger.error("[%s] timed out after %s seconds", job_name, timeout)
+            exit_code = -1
+            stdout = ""
+            stderr = f"TimeoutExpired: {exc}"
 
+        finished_at = datetime.now(timezone.utc)
         last_result = RunResult(
             command=command,
-            returncode=proc.returncode,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
-            attempts=attempts,
-            success=proc.returncode == 0,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            attempts=attempt,
+            started_at=started_at,
+            finished_at=finished_at,
         )
 
         if last_result.success:
-            logger.info("Command succeeded on attempt %d: %s", attempt, command)
-            return last_result
+            logger.info("[%s] succeeded on attempt %d", job_name, attempt)
+            break
 
         logger.warning(
-            "Command failed (attempt %d/%d) with code %d: %s",
-            attempt, retries + 1, proc.returncode, command,
+            "[%s] failed (exit %d) on attempt %d", job_name, exit_code, attempt
         )
-        if proc.stderr:
-            logger.debug("stderr: %s", proc.stderr.strip())
-
         if attempt <= retries:
-            logger.info("Retrying in %.1f seconds...", retry_delay)
             time.sleep(retry_delay)
 
-    # All attempts exhausted
-    if last_result and not last_result.success:
-        logger.error(
-            "Command failed after %d attempt(s): %s", attempts, command
-        )
-        if alert_config is not None:
-            sent = send_failure_alert(
-                alert_config,
-                command,
-                last_result.returncode,
-                last_result.stdout,
-                last_result.stderr,
-                attempts,
+    if history is not None and last_result is not None:
+        history.record(
+            HistoryEntry(
+                job_name=job_name,
+                command=command,
+                started_at=last_result.started_at.isoformat(),
+                finished_at=last_result.finished_at.isoformat(),
+                exit_code=last_result.exit_code,
+                attempts=last_result.attempts,
+                stdout=last_result.stdout,
+                stderr=last_result.stderr,
             )
-            if sent:
-                logger.info("Failure alert sent for command: %s", command)
-            else:
-                logger.warning("Failed to send alert for command: %s", command)
+        )
 
     return last_result
