@@ -1,71 +1,82 @@
 """Command-line interface for cronwrap."""
+from __future__ import annotations
+
 import argparse
 import sys
-from datetime import datetime
+from pathlib import Path
 
-from cronwrap.config import JobConfig
+from cronwrap.runner import run
 from cronwrap.history import JobHistory
 from cronwrap.dashboard import render_all_jobs, render_job_summary
-from cronwrap.runner import run
-from cronwrap.alerting import from_env
+from cronwrap.concurrency import ConcurrencyConfig, acquire_slot, release_slot
+from cronwrap.cli_concurrency import render_concurrency_status
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="cronwrap",
-        description="Lightweight cron job wrapper with logging, alerting, and retry logic.",
-    )
-    sub = parser.add_subparsers(dest="command")
+    p = argparse.ArgumentParser(prog="cronwrap", description="Cron job wrapper")
+    sub = p.add_subparsers(dest="command")
 
-    exec_p = sub.add_parser("exec", help="Execute a cron job command.")
-    exec_p.add_argument("--name", required=True, help="Job name")
-    exec_p.add_argument("--cmd", required=True, help="Shell command to run")
-    exec_p.add_argument("--retries", type=int, default=0, help="Number of retries")
-    exec_p.add_argument("--timeout", type=int, default=None, help="Timeout in seconds")
-    exec_p.add_argument("--history", default=".cronwrap_history.json", help="History file path")
+    ex = sub.add_parser("exec", help="Execute a command")
+    ex.add_argument("cmd", nargs=argparse.REMAINDER)
+    ex.add_argument("--job", default="default", help="Job name")
+    ex.add_argument("--retries", type=int, default=0)
+    ex.add_argument("--history-file", default="/tmp/cronwrap_history.json")
+    ex.add_argument("--max-concurrent", type=int, default=0,
+                    help="Max concurrent instances (0 = unlimited)")
+    ex.add_argument("--lock-dir", default="/tmp/cronwrap_concurrency")
 
-    status_p = sub.add_parser("status", help="Show job run history.")
-    status_p.add_argument("--name", default=None, help="Filter by job name")
-    status_p.add_argument("--limit", type=int, default=10, help="Number of entries to show")
-    status_p.add_argument("--history", default=".cronwrap_history.json", help="History file path")
+    st = sub.add_parser("status", help="Show job history")
+    st.add_argument("--job", default=None)
+    st.add_argument("--history-file", default="/tmp/cronwrap_history.json")
+    st.add_argument("--limit", type=int, default=10)
 
-    return parser
+    cc = sub.add_parser("concurrency", help="Show concurrency status")
+    cc.add_argument("--job", required=True)
+    cc.add_argument("--max-concurrent", type=int, default=1)
+    cc.add_argument("--lock-dir", default="/tmp/cronwrap_concurrency")
 
-
-def cmd_exec(args) -> int:
-    alert_config = from_env()
-    history = JobHistory(args.history)
-    config = JobConfig(
-        name=args.name,
-        command=args.cmd,
-        schedule="* * * * *",
-        retries=args.retries,
-        timeout=args.timeout,
-    )
-    result = run(config, alert_config=alert_config, history=history)
-    return 0 if result.success else 1
+    return p
 
 
-def cmd_status(args) -> int:
-    history = JobHistory(args.history)
-    if args.name:
-        print(render_job_summary(args.name, history, limit=args.limit))
+def cmd_exec(args: argparse.Namespace) -> None:
+    slot = None
+    if args.max_concurrent > 0:
+        from cronwrap.cli_concurrency import check_and_exit_if_at_limit
+        cfg = ConcurrencyConfig(max_concurrent=args.max_concurrent, lock_dir=args.lock_dir)
+        slot = check_and_exit_if_at_limit(args.job, cfg)
+
+    try:
+        history = JobHistory(args.history_file)
+        result = run(args.cmd, retries=args.retries)
+        history.record(args.job, result)
+        if not result.succeeded:
+            sys.exit(result.returncode or 1)
+    finally:
+        if slot:
+            release_slot(slot)
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    history = JobHistory(args.history_file)
+    if args.job:
+        print(render_job_summary(args.job, history, limit=args.limit))
     else:
         print(render_all_jobs(history, limit=args.limit))
-    return 0
 
 
-def main(argv=None) -> int:
+def cmd_concurrency(args: argparse.Namespace) -> None:
+    cfg = ConcurrencyConfig(max_concurrent=args.max_concurrent, lock_dir=args.lock_dir)
+    print(render_concurrency_status(args.job, cfg))
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command == "exec":
-        return cmd_exec(args)
+        cmd_exec(args)
     elif args.command == "status":
-        return cmd_status(args)
+        cmd_status(args)
+    elif args.command == "concurrency":
+        cmd_concurrency(args)
     else:
         parser.print_help()
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
