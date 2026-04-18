@@ -61,3 +61,14 @@ def test_timeout_triggers_retry():
         code = run(["slow"], retries=1, timeout=1, retry_delay=0.0, job_name="test_timeout")
     assert code == 0
     assert mock_run.call_count == 2
+
+
+def test_timeout_all_retries_exhausted():
+    """All attempts raise TimeoutExpired; run should return a non-zero exit code."""
+    import subprocess
+    with patch("cronwrap.runner.subprocess.run") as mock_run, \
+         patch("cronwrap.runner.time.sleep"):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="slow", timeout=1)
+        code = run(["slow"], retries=2, timeout=1, retry_delay=0.0, job_name="test_timeout_exhausted")
+    assert code != 0
+    assert mock_run.call_count == 3
