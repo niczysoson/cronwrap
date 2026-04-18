@@ -17,6 +17,10 @@ class HistoryEntry:
     stderr: str = ""
     tags: List[str] = field(default_factory=list)
 
+    @property
+    def succeeded(self) -> bool:
+        return self.exit_code == 0
+
     @staticmethod
     def success(job_name: str, started_at: str, duration: float, stdout: str = "", tags: Optional[List[str]] = None) -> "HistoryEntry":
         return HistoryEntry(job_name, started_at, duration, 0, stdout, tags=tags or [])
@@ -70,3 +74,8 @@ class JobHistory:
 
     def filter_by_job_name(self, job_name: str) -> List[HistoryEntry]:
         return self.for_job(job_name)
+
+    def last_for_job(self, job_name: str) -> Optional[HistoryEntry]:
+        """Return the most recent history entry for a given job, or None if not found."""
+        entries = self.for_job(job_name)
+        return entries[-1] if entries else None
