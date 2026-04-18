@@ -1,69 +1,72 @@
-"""Job run history tracking with optional file persistence."""
+"""Persistent job run history."""
 from __future__ import annotations
 import json
-from dataclasses import dataclass, asdict
+import os
+from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import List, Optional
-
-DT_FMT = "%Y-%m-%dT%H:%M:%S"
 
 
 @dataclass
 class HistoryEntry:
     job_name: str
-    started_at: datetime
+    started_at: str
     duration_seconds: float
     exit_code: int
-    success: bool
     stdout: str = ""
     stderr: str = ""
+    tags: List[str] = field(default_factory=list)
 
     @staticmethod
-    def success(job_name: str, started_at: datetime, duration: float, stdout: str = "") -> "HistoryEntry":
-        return HistoryEntry(job_name, started_at, duration, 0, True, stdout)
+    def success(job_name: str, started_at: str, duration: float, stdout: str = "", tags: Optional[List[str]] = None) -> "HistoryEntry":
+        return HistoryEntry(job_name, started_at, duration, 0, stdout, tags=tags or [])
 
     @staticmethod
     def from_dict(d: dict) -> "HistoryEntry":
-        d = dict(d)
-        d["started_at"] = datetime.strptime(d["started_at"], DT_FMT)
-        return HistoryEntry(**d)
+        return HistoryEntry(
+            job_name=d["job_name"],
+            started_at=d["started_at"],
+            duration_seconds=d["duration_seconds"],
+            exit_code=d["exit_code"],
+            stdout=d.get("stdout", ""),
+            stderr=d.get("stderr", ""),
+            tags=d.get("tags", []),
+        )
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        d["started_at"] = self.started_at.strftime(DT_FMT)
-        return d
+        return {
+            "job_name": self.job_name,
+            "started_at": self.started_at,
+            "duration_seconds": self.duration_seconds,
+            "exit_code": self.exit_code,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "tags": self.tags,
+        }
 
 
 class JobHistory:
-    def __init__(self, filepath: Optional[str] = None):
-        self._filepath = Path(filepath) if filepath else None
-        self._entries: List[HistoryEntry] = []
-        if self._filepath and self._filepath.exists():
-            self._load()
+    def __init__(self, path: str):
+        self.path = path
+        self.entries: List[HistoryEntry] = []
+        self._load()
 
-    def record(self, entry: HistoryEntry) -> None:
-        self._entries.append(entry)
-        if self._filepath:
-            self._save()
+    def _load(self):
+        if os.path.exists(self.path):
+            with open(self.path) as f:
+                data = json.load(f)
+            self.entries = [HistoryEntry.from_dict(d) for d in data]
 
-    def get(self, job_name: str, limit: int = 100) -> List[HistoryEntry]:
-        matches = [e for e in self._entries if e.job_name == job_name]
-        return list(reversed(matches[-limit:]))
+    def _save(self):
+        with open(self.path, "w") as f:
+            json.dump([e.to_dict() for e in self.entries], f, indent=2)
 
-    def list_jobs(self) -> List[str]:
-        return list({e.job_name for e in self._entries})
+    def record(self, entry: HistoryEntry):
+        self.entries.append(entry)
+        self._save()
 
-    def filter_by_status(self, success: bool) -> List[HistoryEntry]:
-        return [e for e in self._entries if e.success == success]
+    def for_job(self, job_name: str) -> List[HistoryEntry]:
+        return [e for e in self.entries if e.job_name == job_name]
 
-    def _save(self) -> None:
-        assert self._filepath
-        self._filepath.parent.mkdir(parents=True, exist_ok=True)
-        with self._filepath.open("w") as f:
-            json.dump([e.to_dict() for e in self._entries], f, indent=2)
-
-    def _load(self) -> None:
-        assert self._filepath
-        with self._filepath.open() as f:
-            self._entries = [HistoryEntry.from_dict(d) for d in json.load(f)]
+    def filter_by_job_name(self, job_name: str) -> List[HistoryEntry]:
+        return self.for_job(job_name)
