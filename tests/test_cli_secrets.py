@@ -42,3 +42,12 @@ def test_apply_mask_to_result_masks(monkeypatch):
     so, se = apply_mask_to_result("output s3cr3t here", "error s3cr3t here", cfg)
     assert "s3cr3t" not in so
     assert "s3cr3t" not in se
+
+
+def test_apply_mask_to_result_unset_env_var(monkeypatch):
+    """Env var listed in mask config but not set should not cause errors."""
+    monkeypatch.delenv("MISSING_VAR", raising=False)
+    cfg = MaskConfig(env_vars=["MISSING_VAR"])
+    so, se = apply_mask_to_result("some output", "some error", cfg)
+    assert so == "some output"
+    assert se == "some error"
