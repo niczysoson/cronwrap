@@ -68,3 +68,16 @@ def compute_all_metrics(history: JobHistory) -> List[JobMetrics]:
     """Compute metrics for all jobs tracked in history."""
     names = {e.job_name for e in history._entries}
     return [compute_metrics(name, history) for name in sorted(names)]
+
+
+def metrics_to_json(metrics: List[JobMetrics], indent: int = 2) -> str:
+    """Serialize a list of JobMetrics to a JSON string.
+
+    Args:
+        metrics: List of JobMetrics instances to serialize.
+        indent: JSON indentation level. Defaults to 2.
+
+    Returns:
+        A JSON-formatted string representation of the metrics.
+    """
+    return json.dumps([m.to_dict() for m in metrics], indent=indent)
