@@ -58,7 +58,10 @@ class JobHistory:
     def _load(self):
         if os.path.exists(self.path):
             with open(self.path) as f:
-                data = json.load(f)
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Failed to parse history file '{self.path}': {e}") from e
             self.entries = [HistoryEntry.from_dict(d) for d in data]
 
     def _save(self):
