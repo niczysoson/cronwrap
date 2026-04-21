@@ -24,6 +24,11 @@ class Checkpoint:
     def is_done(self, step: str) -> bool:
         return step in self.completed_steps
 
+    def reset(self) -> None:
+        """Clear all completed steps and metadata, restarting progress from scratch."""
+        self.completed_steps.clear()
+        self.metadata.clear()
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "job_name": self.job_name,
@@ -49,8 +54,11 @@ def load_checkpoint(job_name: str, directory: Path = _DEFAULT_DIR) -> Optional[C
     path = _checkpoint_path(job_name, directory)
     if not path.exists():
         return None
-    with open(path) as f:
-        return Checkpoint.from_dict(json.load(f))
+    try:
+        with open(path) as f:
+            return Checkpoint.from_dict(json.load(f))
+    except (json.JSONDecodeError, KeyError) as exc:
+        raise ValueError(f"Checkpoint file for '{job_name}' is corrupt or invalid: {path}") from exc
 
 
 def save_checkpoint(cp: Checkpoint, directory: Path = _DEFAULT_DIR) -> None:
