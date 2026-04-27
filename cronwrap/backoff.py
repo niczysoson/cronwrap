@@ -26,7 +26,20 @@ class BackoffConfig:
             raise ValueError(f"Unknown strategy: {self.strategy}")
 
     def delay_for(self, attempt: int) -> float:
-        """Return delay in seconds for the given attempt number (1-based)."""
+        """Return delay in seconds for the given attempt number (1-based).
+
+        Args:
+            attempt: The attempt number, starting at 1.
+
+        Returns:
+            Delay in seconds, capped at ``max_delay``.
+
+        Raises:
+            ValueError: If *attempt* is less than 1.
+        """
+        if attempt < 1:
+            raise ValueError(f"attempt must be >= 1, got {attempt}")
+
         if self.strategy == "fixed":
             delay = self.base_delay
         elif self.strategy == "linear":
