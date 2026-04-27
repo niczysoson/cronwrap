@@ -33,6 +33,14 @@ class SplayConfig:
             time.sleep(secs)
         return secs
 
+    def reset(self) -> None:
+        """Reset the internal RNG to its initial seed, reproducing the same sequence.
+
+        Useful in tests or when a job is retried and the same splay sequence
+        is desired for reproducibility.
+        """
+        self._rng = random.Random(self.seed)
+
     def to_dict(self) -> dict:
         return {
             "max_seconds": self.max_seconds,
