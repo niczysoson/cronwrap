@@ -23,6 +23,11 @@ class RetryRunResult:
     def total_attempts(self) -> int:
         return len(self.attempts)
 
+    @property
+    def failed_attempts(self) -> int:
+        """Return the number of attempts that did not exit with code 0."""
+        return sum(1 for r in self.attempts if r.exit_code != 0)
+
 
 def run_with_retry(
     cmd: str,
@@ -30,7 +35,16 @@ def run_with_retry(
     *,
     timeout: float | None = None,
 ) -> RetryRunResult:
-    """Run *cmd* up to policy.max_attempts times, honouring delay/backoff."""
+    """Run *cmd* up to policy.max_attempts times, honouring delay/backoff.
+
+    Args:
+        cmd: The shell command to execute.
+        policy: A RetryPolicy controlling max attempts, delay, and backoff.
+        timeout: Optional per-attempt timeout in seconds.
+
+    Returns:
+        A RetryRunResult containing all attempt outcomes.
+    """
     result = RetryRunResult()
     for attempt in range(policy.max_attempts):
         sleep_between_attempts(policy, attempt)
