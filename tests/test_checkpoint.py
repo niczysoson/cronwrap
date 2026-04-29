@@ -16,6 +16,14 @@ def cp_dir(tmp_path: Path) -> Path:
     return tmp_path / "checkpoints"
 
 
+@pytest.fixture()
+def saved_checkpoint(cp_dir: Path) -> Checkpoint:
+    """Return a saved Checkpoint with two completed steps for reuse across tests."""
+    cp = Checkpoint(job_name="etl", completed_steps=["extract", "transform"])
+    save_checkpoint(cp, cp_dir)
+    return cp
+
+
 def test_new_checkpoint_has_no_steps():
     cp = Checkpoint(job_name="myjob")
     assert cp.completed_steps == []
@@ -73,9 +81,7 @@ def test_render_no_checkpoint(cp_dir):
     assert "No checkpoint" in out
 
 
-def test_render_with_steps(cp_dir):
-    cp = Checkpoint(job_name="etl", completed_steps=["extract", "transform"])
-    save_checkpoint(cp, cp_dir)
+def test_render_with_steps(cp_dir, saved_checkpoint):
     out = render_checkpoint("etl", cp_dir)
     assert "extract" in out
     assert "transform" in out
